@@ -223,6 +223,8 @@ function Lobby({
     <main className="lobby-screen">
       <img className="lobby-backdrop" src={showStage} alt="The Capitalist game show stage" />
       <div className="lobby-shade" />
+      <div className="marquee-wall" aria-hidden="true" />
+      <div className="audience-silhouette" aria-hidden="true" />
       <button
         className="lobby-sound icon-button"
         type="button"
@@ -233,14 +235,17 @@ function Lobby({
       </button>
 
       <section className="lobby-copy">
-        <img className="lobby-mark" src="/capitalist-mark.svg" alt="" />
-        <p>AN ORIGINAL NEGOTIATION GAME SHOW</p>
-        <h1>THE CAPITALIST</h1>
-        <span>Twenty vaults. One private position. Every decision has a price.</span>
+        <p>WELCOME TO</p>
+        <div className="show-logo-lockup">
+          <img className="lobby-mark" src="/capitalist-mark.svg" alt="" />
+          <h1><span>THE</span> CAPITALIST</h1>
+          <b>THE ULTIMATE NEGOTIATION SHOW</b>
+        </div>
+        <span>Twenty cases. One personal case. Every decision has a price.</span>
         <button className="enter-show" type="button" onClick={onStart}>
-          <Sparkles size={20} /> ENTER THE SHOW <ChevronRight size={20} />
+          <Sparkles size={20} /> TAP TO PLAY <ChevronRight size={20} />
         </button>
-        <small>Virtual CAP only · No cash-out · No tradable rewards</small>
+        <small>VIRTUAL CAP ONLY / NO CASH-OUT / NO TRADABLE REWARDS</small>
       </section>
     </main>
   )
@@ -299,20 +304,22 @@ function StageScene({
 }) {
   return (
     <section className="stage-screen">
-      <div className="stage-lights" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+      <div className="marquee-wall" aria-hidden="true" />
+      <div className="stage-lights" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></div>
+      <div className="audience-silhouette" aria-hidden="true" />
       <PrizeTower game={game} side="low" />
 
       <div className="vault-stage">
         <div className="stage-callout">
-          <p>{game.phase === 'selecting' ? 'OPENING DECISION' : `ROUND ${game.roundIndex + 1}`}</p>
+          <p>{game.phase === 'selecting' ? 'CHOOSE YOUR PERSONAL CASE' : `ROUND ${game.roundIndex + 1}`}</p>
           <h2>
             {game.phase === 'selecting'
-              ? 'Choose the vault you will defend.'
-              : `Open ${boxesLeft} rival vault${boxesLeft === 1 ? '' : 's'}.`}
+              ? 'This will be your case.'
+              : `Open ${boxesLeft} case${boxesLeft === 1 ? '' : 's'}.`}
           </h2>
           <span>
             {game.phase === 'selecting'
-              ? 'Its value stays hidden until you sell or reach the final reveal.'
+              ? 'Its value stays hidden until you make a deal or reach the final reveal.'
               : 'Each reveal removes a possible reward and reprices the offer.'}
           </span>
         </div>
@@ -332,7 +339,7 @@ function StageScene({
         </div>
 
         <div className={`private-podium ${game.selectedBoxId ? 'is-set' : ''}`}>
-          <span><Crown size={18} /> YOUR PRIVATE VAULT</span>
+          <span><Crown size={18} /> YOUR PERSONAL CASE</span>
           <strong>{game.selectedBoxId ? `#${String(game.selectedBoxId).padStart(2, '0')}` : 'NOT SELECTED'}</strong>
         </div>
       </div>
@@ -387,22 +394,44 @@ function OfferScene({
 
   return (
     <section className="offer-screen">
+      <div className="offer-stage-panel">
+        <div className="marquee-wall" aria-hidden="true" />
+        <div className="audience-silhouette" aria-hidden="true" />
+
+        <div className="bank-offer-board">
+          <span>BANK OFFER</span>
+          <strong>{formatCap(offer.amount)}</strong>
+        </div>
+
+        <div className="bank-phone" aria-hidden="true">
+          <span className="phone-handset"><PhoneCall size={86} strokeWidth={1.5} /></span>
+          <span className="phone-dial"><i /><i /><i /><i /><i /><i /></span>
+        </div>
+
       <div className="offer-portrait-wrap">
         <img src={capitalistPortrait} alt="The Capitalist" />
         <div className="portrait-scan" />
         <span><i /> RISK DESK · LIVE</span>
       </div>
 
+        <div className="personal-case-chip">
+          <BriefcaseBusiness size={22} />
+          <span><small>PERSONAL CASE</small>#{String(game.selectedBoxId ?? 0).padStart(2, '0')}</span>
+        </div>
+
+        <PrizeTower game={game} side="high" />
+      </div>
+
       <div className="offer-console">
-        <div className="incoming-call"><PhoneCall size={20} /> INCOMING OFFER · ROUND {offer.round}</div>
-        <p>THE CAPITALIST WILL BUY YOUR PRIVATE VAULT FOR</p>
-        <h2>{formatCap(offer.amount)}</h2>
+        <div className="incoming-call"><PhoneCall size={20} /> LIVE BANK CALL / ROUND {offer.round}</div>
+        <p>THE CAPITALIST IS WAITING FOR YOUR DECISION</p>
+        <h2>YOUR MOVE</h2>
         <div className="offer-metrics">
           <span><small>EXPECTED VALUE</small>{formatCap(offer.ev)}</span>
           <span><small>OFFER / EV</small>{Math.round(offer.multiplier * 100)}%</span>
           <span><small>PRESSURE</small>{offer.pressure.toUpperCase()}</span>
         </div>
-        <blockquote>“{offer.quote}”</blockquote>
+        <blockquote>"{offer.quote}"</blockquote>
 
         {game.lastCounter ? (
           <div className={`counter-response ${game.lastCounter.kind}`}>
