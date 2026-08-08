@@ -40,13 +40,23 @@ interface RevealState {
   reward: number
 }
 
+interface StageBannerState {
+  kicker: string
+  title: string
+  detail: string
+}
+
 function App() {
   const [game, setGame] = useState<GameState>(() => createNewGame())
   const [view, setView] = useState<ShowView>('lobby')
   const [reveal, setReveal] = useState<RevealState | null>(null)
   const [counterAsk, setCounterAsk] = useState('')
   const [counterError, setCounterError] = useState('')
+  const [offerReady, setOfferReady] = useState(false)
+  const [stageBanner, setStageBanner] = useState<StageBannerState | null>(null)
   const revealTimer = useRef<number | null>(null)
+  const offerTimer = useRef<number | null>(null)
+  const bannerTimer = useRef<number | null>(null)
   const { muted, play, setMuted } = useGameAudio()
   const ev = useMemo(() => calculateEV(game), [game])
   const boxesLeft = getBoxesLeftToOpenThisRound(game)
@@ -55,24 +65,42 @@ function App() {
   useEffect(() => {
     return () => {
       if (revealTimer.current) window.clearTimeout(revealTimer.current)
+      if (offerTimer.current) window.clearTimeout(offerTimer.current)
+      if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
     }
   }, [])
+
+  function showStageBanner(banner: StageBannerState) {
+    if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
+    setStageBanner(banner)
+    bannerTimer.current = window.setTimeout(() => setStageBanner(null), 1250)
+  }
 
   function startShow() {
     setGame(createNewGame())
     setCounterAsk('')
     setCounterError('')
     setReveal(null)
+    setOfferReady(false)
     setView('stage')
+    showStageBanner({
+      kicker: 'OPENING DECISION',
+      title: 'CHOOSE YOUR CASE',
+      detail: 'ONE CASE STAYS WITH YOU UNTIL THE FINAL DECISION',
+    })
     play('intro')
   }
 
   function restartToLobby() {
     if (revealTimer.current) window.clearTimeout(revealTimer.current)
+    if (offerTimer.current) window.clearTimeout(offerTimer.current)
+    if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
     setGame(createNewGame())
     setCounterAsk('')
     setCounterError('')
     setReveal(null)
+    setOfferReady(false)
+    setStageBanner(null)
     setView('lobby')
   }
 
@@ -95,13 +123,20 @@ function App() {
     revealTimer.current = window.setTimeout(() => {
       setReveal(null)
       if (next.phase === 'offer') {
+        setOfferReady(false)
         setView('offer')
         play('ring')
+        if (offerTimer.current) window.clearTimeout(offerTimer.current)
+        offerTimer.current = window.setTimeout(() => {
+          setOfferReady(true)
+          play('counter')
+        }, 1650)
       }
     }, 1450)
   }
 
   function deal() {
+    if (!offerReady) return
     const next = acceptCurrentOffer(game)
     setGame(next)
     setCounterAsk('')
@@ -110,6 +145,7 @@ function App() {
   }
 
   function hold() {
+    if (!offerReady) return
     const next = holdOffer(game)
     setGame(next)
     setCounterAsk('')
@@ -118,12 +154,19 @@ function App() {
       setView('settlement')
       play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'lose')
     } else {
+      setOfferReady(false)
       setView('stage')
+      showStageBanner({
+        kicker: `ROUND ${next.roundIndex + 1}`,
+        title: `OPEN ${getBoxesLeftToOpenThisRound(next)} CASES`,
+        detail: 'EVERY REVEAL CHANGES THE BANK OFFER',
+      })
       play('hold')
     }
   }
 
   function submitCounter() {
+    if (!offerReady) return
     const amount = Number(counterAsk)
     if (!Number.isFinite(amount) || amount <= 0) {
       setCounterError('Enter a valid CAP amount.')
@@ -144,6 +187,7 @@ function App() {
   }
 
   function seedCounter() {
+    if (!offerReady) return
     if (!game.currentOffer) return
     const ask = game.currentOffer.amount +
       (game.currentOffer.ev - game.currentOffer.amount) * 0.55
@@ -187,6 +231,7 @@ function App() {
         {view === 'offer' ? (
           <OfferScene
             game={game}
+            ready={offerReady}
             counterAsk={counterAsk}
             counterError={counterError}
             onCounterAskChange={(value) => {
@@ -206,6 +251,7 @@ function App() {
       </div>
 
       {reveal ? <RevealOverlay reveal={reveal} /> : null}
+      {stageBanner ? <StageBannerOverlay banner={stageBanner} /> : null}
     </main>
   )
 }
@@ -372,6 +418,7 @@ function PrizeTower({ game, side }: { game: GameState; side: 'low' | 'high' }) {
 
 function OfferScene({
   game,
+  ready,
   counterAsk,
   counterError,
   onCounterAskChange,
@@ -381,6 +428,7 @@ function OfferScene({
   onMark,
 }: {
   game: GameState
+  ready: boolean
   counterAsk: string
   counterError: string
   onCounterAskChange: (value: string) => void
@@ -394,13 +442,13 @@ function OfferScene({
 
   return (
     <section className="offer-screen">
-      <div className="offer-stage-panel">
+      <div className={`offer-stage-panel ${ready ? 'offer-ready' : 'offer-ringing'}`}>
         <div className="marquee-wall" aria-hidden="true" />
         <div className="audience-silhouette" aria-hidden="true" />
 
         <div className="bank-offer-board">
-          <span>BANK OFFER</span>
-          <strong>{formatCap(offer.amount)}</strong>
+          <span>{ready ? 'BANK OFFER' : 'INCOMING CALL'}</span>
+          <strong>{ready ? formatCap(offer.amount) : 'CALCULATING...'}</strong>
         </div>
 
         <div className="bank-phone" aria-hidden="true">
@@ -423,9 +471,10 @@ function OfferScene({
       </div>
 
       <div className="offer-console">
-        <div className="incoming-call"><PhoneCall size={20} /> LIVE BANK CALL / ROUND {offer.round}</div>
-        <p>THE CAPITALIST IS WAITING FOR YOUR DECISION</p>
-        <h2>YOUR MOVE</h2>
+        <div className="incoming-call"><PhoneCall size={20} /> {ready ? 'OFFER RECEIVED' : 'CONNECTING'} / ROUND {offer.round}</div>
+        <p>{ready ? 'THE CAPITALIST IS WAITING FOR YOUR DECISION' : 'THE BANK IS PRICING YOUR CASE'}</p>
+        <h2>{ready ? 'YOUR MOVE' : 'STAND BY'}</h2>
+        <div className={`call-progress ${ready ? 'is-ready' : ''}`} aria-hidden="true"><span /></div>
         <div className="offer-metrics">
           <span><small>EXPECTED VALUE</small>{formatCap(offer.ev)}</span>
           <span><small>OFFER / EV</small>{Math.round(offer.multiplier * 100)}%</span>
@@ -441,11 +490,11 @@ function OfferScene({
         ) : null}
 
         <div className="decision-row">
-          <button className="deal-action" type="button" onClick={onDeal}>
+          <button className="deal-action" type="button" onClick={onDeal} disabled={!ready}>
             <Check size={22} />
             <span><small>LOCK THE PRICE</small>DEAL</span>
           </button>
-          <button className="hold-action" type="button" onClick={onHold}>
+          <button className="hold-action" type="button" onClick={onHold} disabled={!ready}>
             <Shield size={22} />
             <span><small>RETURN TO THE STAGE</small>HOLD</span>
           </button>
@@ -459,12 +508,13 @@ function OfferScene({
               min="1"
               inputMode="numeric"
               type="number"
+              disabled={!ready}
               value={counterAsk}
               onChange={(event) => onCounterAskChange(event.target.value)}
               placeholder="Enter CAP amount"
             />
-            <button type="button" onClick={onMark}>MARK</button>
-            <button type="button" onClick={onCounter}><TrendingUp size={17} /> SEND</button>
+            <button type="button" onClick={onMark} disabled={!ready}>MARK</button>
+            <button type="button" onClick={onCounter} disabled={!ready}><TrendingUp size={17} /> SEND</button>
           </div>
           {counterError ? <span className="input-error">{counterError}</span> : null}
         </div>
@@ -521,6 +571,20 @@ function SettlementScene({ game, onRestart }: { game: GameState; onRestart: () =
         <RotateCcw size={20} /> PLAY ANOTHER SHOW
       </button>
     </section>
+  )
+}
+
+function StageBannerOverlay({ banner }: { banner: StageBannerState }) {
+  return (
+    <div className="stage-banner-overlay" role="status" aria-live="polite">
+      <div className="banner-light-wall" aria-hidden="true" />
+      <div className="stage-banner-copy">
+        <BriefcaseBusiness size={34} strokeWidth={1.5} />
+        <p>{banner.kicker}</p>
+        <strong>{banner.title}</strong>
+        <span>{banner.detail}</span>
+      </div>
+    </div>
   )
 }
 
