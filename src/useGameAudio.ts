@@ -1,16 +1,17 @@
 import { useCallback, useRef, useState } from 'react'
 
 export type SoundCue =
-  | 'intro'
+  | 'transition'
+  | 'round'
   | 'select'
   | 'reveal'
-  | 'ring'
-  | 'counter'
+  | 'eliminate'
+  | 'offerPrompt'
   | 'deal'
-  | 'hold'
-  | 'reject'
-  | 'win'
-  | 'lose'
+  | 'noDeal'
+  | 'finalReveal'
+  | 'champion'
+  | 'clown'
 
 export function useGameAudio() {
   const [muted, setMuted] = useState(false)
@@ -29,7 +30,7 @@ export function useGameAudio() {
         frequency: number,
         start: number,
         duration: number,
-        volume = 0.07,
+        volume = 0.06,
         type: OscillatorType = 'sine',
         endFrequency?: number,
       ) => {
@@ -49,12 +50,17 @@ export function useGameAudio() {
         oscillator.connect(gain)
         gain.connect(context.destination)
         oscillator.start(now + start)
-        oscillator.stop(now + start + duration + 0.02)
+        oscillator.stop(now + start + duration + 0.03)
       }
 
-      const noise = (start: number, duration: number, volume = 0.045) => {
-        const frameCount = Math.max(1, Math.floor(context.sampleRate * duration))
-        const buffer = context.createBuffer(1, frameCount, context.sampleRate)
+      const noise = (
+        start: number,
+        duration: number,
+        volume = 0.04,
+        frequency = 900,
+      ) => {
+        const frames = Math.max(1, Math.floor(context.sampleRate * duration))
+        const buffer = context.createBuffer(1, frames, context.sampleRate)
         const data = buffer.getChannelData(0)
         for (let index = 0; index < data.length; index += 1) {
           data[index] = Math.random() * 2 - 1
@@ -64,7 +70,7 @@ export function useGameAudio() {
         const gain = context.createGain()
         source.buffer = buffer
         filter.type = 'bandpass'
-        filter.frequency.value = 920
+        filter.frequency.value = frequency
         filter.Q.value = 0.8
         gain.gain.setValueAtTime(volume, now + start)
         gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration)
@@ -74,37 +80,61 @@ export function useGameAudio() {
         source.start(now + start)
       }
 
-      if (cue === 'intro') {
-        ;[196, 247, 294, 392, 494].forEach((frequency, index) =>
-          tone(frequency, index * 0.11, 0.42, 0.065, index === 4 ? 'sine' : 'triangle'),
-        )
-        tone(98, 0, 0.85, 0.055, 'sine')
-      } else if (cue === 'select') {
-        tone(330, 0, 0.1, 0.07, 'triangle', 440)
-        tone(660, 0.07, 0.16, 0.045)
-      } else if (cue === 'reveal') {
-        noise(0, 0.28, 0.06)
-        tone(640, 0, 0.3, 0.04, 'sawtooth', 110)
-        tone(86, 0.22, 0.24, 0.1, 'sine')
-      } else if (cue === 'ring') {
-        ;[0, 0.16, 0.62, 0.78].forEach((start) => {
-          tone(880, start, 0.11, 0.05, 'sine')
-          tone(1100, start, 0.11, 0.035, 'sine')
+      if (cue === 'transition') {
+        noise(0, 0.42, 0.055, 1250)
+        tone(130, 0, 0.42, 0.045, 'sawtooth', 520)
+        tone(620, 0.3, 0.18, 0.035, 'triangle')
+      } else if (cue === 'round') {
+        ;[196, 247, 294, 392, 494, 587].forEach((frequency, index) => {
+          tone(frequency, index * 0.085, 0.34, 0.065, 'triangle')
         })
-      } else if (cue === 'counter') {
-        tone(280, 0, 0.16, 0.055, 'triangle', 420)
-        tone(520, 0.12, 0.22, 0.06, 'triangle', 680)
-      } else if (cue === 'deal' || cue === 'win') {
-        ;[262, 330, 392, 523, 659].forEach((frequency, index) =>
-          tone(frequency, index * 0.09, 0.46, 0.075, 'triangle'),
-        )
-        tone(1047, 0.42, 0.62, 0.055, 'sine')
-      } else if (cue === 'hold') {
-        tone(260, 0, 0.34, 0.075, 'sawtooth', 120)
-        tone(110, 0.2, 0.28, 0.07, 'sine')
-      } else if (cue === 'reject' || cue === 'lose') {
-        tone(180, 0, 0.3, 0.09, 'square', 92)
-        tone(120, 0.2, 0.36, 0.06, 'sawtooth', 72)
+        tone(98, 0, 0.72, 0.07, 'sine')
+        noise(0.42, 0.22, 0.035, 1800)
+      } else if (cue === 'select') {
+        tone(320, 0, 0.12, 0.07, 'triangle', 520)
+        tone(760, 0.1, 0.2, 0.05, 'sine')
+      } else if (cue === 'reveal') {
+        noise(0, 0.3, 0.065, 1200)
+        tone(720, 0, 0.34, 0.055, 'sawtooth', 130)
+        tone(98, 0.25, 0.35, 0.11, 'sine')
+        tone(392, 0.42, 0.45, 0.06, 'triangle')
+      } else if (cue === 'eliminate') {
+        tone(420, 0, 0.14, 0.08, 'square', 270)
+        tone(250, 0.12, 0.22, 0.08, 'sawtooth', 92)
+        noise(0.18, 0.22, 0.055, 420)
+      } else if (cue === 'offerPrompt') {
+        ;[0, 0.16, 0.58, 0.74].forEach((start) => {
+          tone(820, start, 0.11, 0.055, 'sine')
+          tone(1080, start, 0.11, 0.04, 'sine')
+        })
+        tone(82, 0.9, 0.6, 0.07, 'sine')
+      } else if (cue === 'deal') {
+        noise(0, 0.16, 0.04, 1900)
+        ;[262, 330, 392, 523].forEach((frequency, index) => {
+          tone(frequency, index * 0.1, 0.42, 0.075, 'triangle')
+        })
+      } else if (cue === 'noDeal') {
+        tone(310, 0, 0.22, 0.08, 'sawtooth', 105)
+        tone(92, 0.17, 0.34, 0.09, 'sine')
+        noise(0.18, 0.2, 0.035, 520)
+      } else if (cue === 'finalReveal') {
+        noise(0, 0.48, 0.06, 1350)
+        tone(110, 0, 0.7, 0.08, 'sine')
+        tone(220, 0.26, 0.52, 0.06, 'triangle', 660)
+        tone(880, 0.65, 0.5, 0.055, 'sine')
+      } else if (cue === 'champion') {
+        const notes = [196, 262, 330, 392, 523, 659, 784, 1047]
+        notes.forEach((frequency, index) => {
+          tone(frequency, index * 0.13, 0.52, 0.07, 'triangle')
+          if (index % 2 === 0) noise(index * 0.13, 0.08, 0.03, 110)
+        })
+        tone(131, 0, 1.45, 0.06, 'sawtooth')
+        tone(523, 1.05, 0.9, 0.075, 'sine')
+      } else if (cue === 'clown') {
+        tone(330, 0, 0.2, 0.08, 'square', 190)
+        tone(180, 0.18, 0.34, 0.09, 'sawtooth', 72)
+        tone(520, 0.56, 0.18, 0.075, 'square', 390)
+        tone(140, 0.75, 0.46, 0.07, 'sine', 64)
       }
     },
     [muted],

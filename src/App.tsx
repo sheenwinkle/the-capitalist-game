@@ -4,18 +4,16 @@ import {
   Check,
   ChevronRight,
   Crown,
-  Landmark,
   PhoneCall,
   RotateCcw,
-  Shield,
   Sparkles,
-  TrendingUp,
   Trophy,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react'
 import './App.css'
-import capitalistPortrait from './assets/capitalist-portrait.jpg'
+import castSprite from './assets/cast-sprite-v1.png'
 import showStage from './assets/show-stage.jpg'
 import { useGameAudio } from './useGameAudio'
 import {
@@ -26,177 +24,193 @@ import {
   getBoxesLeftToOpenThisRound,
   getRewardTier,
   holdOffer,
-  makeCounterOffer,
   openBox,
+  REWARD_LADDER,
   ROUND_OPEN_COUNTS,
   selectBox,
 } from '@the-capitalist/core'
-import type { BoxStatus, GameState, PrizeBox } from '@the-capitalist/core'
+import type { GameState } from '@the-capitalist/core'
 
-type ShowView = 'lobby' | 'stage' | 'offer' | 'settlement'
+type ShowScene =
+  | 'lobby'
+  | 'round-intro'
+  | 'board'
+  | 'hostess-reveal'
+  | 'elimination'
+  | 'offer'
+  | 'final-reveal'
+  | 'result'
 
-interface RevealState {
+interface PendingReveal {
   boxId: number
   reward: number
+  roundIndex: number
 }
 
-interface StageBannerState {
+interface RoundCard {
   kicker: string
   title: string
   detail: string
 }
 
+const CAPITALISTS = [
+  { name: 'MARCUS KANE', title: 'THE OLD GUARD' },
+  { name: 'VICTORIA LIM', title: 'THE DEAL ARCHITECT' },
+  { name: 'ADRIAN PARK', title: 'THE QUANT' },
+  { name: 'RAFAEL TAN', title: 'THE RAIDER' },
+  { name: 'EVELYN CHO', title: 'THE CLOSER' },
+  { name: 'KENJI MORI', title: 'THE LAST WORD' },
+]
+
 function App() {
   const [game, setGame] = useState<GameState>(() => createNewGame())
-  const [view, setView] = useState<ShowView>('lobby')
-  const [reveal, setReveal] = useState<RevealState | null>(null)
-  const [counterAsk, setCounterAsk] = useState('')
-  const [counterError, setCounterError] = useState('')
-  const [offerReady, setOfferReady] = useState(false)
-  const [stageBanner, setStageBanner] = useState<StageBannerState | null>(null)
-  const revealTimer = useRef<number | null>(null)
-  const offerTimer = useRef<number | null>(null)
-  const bannerTimer = useRef<number | null>(null)
+  const [scene, setScene] = useState<ShowScene>('lobby')
+  const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null)
+  const [roundCard, setRoundCard] = useState<RoundCard | null>(null)
+  const [amountVisible, setAmountVisible] = useState(false)
+  const [dockMotion, setDockMotion] = useState(false)
+  const timers = useRef<number[]>([])
   const { muted, play, setMuted } = useGameAudio()
+
   const ev = useMemo(() => calculateEV(game), [game])
-  const boxesLeft = getBoxesLeftToOpenThisRound(game)
-  const round = Math.min(game.roundIndex + 1, ROUND_OPEN_COUNTS.length)
 
-  useEffect(() => {
-    return () => {
-      if (revealTimer.current) window.clearTimeout(revealTimer.current)
-      if (offerTimer.current) window.clearTimeout(offerTimer.current)
-      if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
-    }
-  }, [])
+  useEffect(() => () => clearTimers(), [])
 
-  function showStageBanner(banner: StageBannerState) {
-    if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
-    setStageBanner(banner)
-    bannerTimer.current = window.setTimeout(() => setStageBanner(null), 1250)
+  function schedule(action: () => void, delay: number) {
+    const timer = window.setTimeout(() => {
+      timers.current = timers.current.filter((item) => item !== timer)
+      action()
+    }, delay)
+    timers.current.push(timer)
+  }
+
+  function clearTimers() {
+    timers.current.forEach((timer) => window.clearTimeout(timer))
+    timers.current = []
   }
 
   function startShow() {
-    setGame(createNewGame())
-    setCounterAsk('')
-    setCounterError('')
-    setReveal(null)
-    setOfferReady(false)
-    setView('stage')
-    showStageBanner({
+    clearTimers()
+    const next = createNewGame()
+    setGame(next)
+    setPendingReveal(null)
+    setAmountVisible(false)
+    setRoundCard({
       kicker: 'OPENING DECISION',
       title: 'CHOOSE YOUR CASE',
-      detail: 'ONE CASE STAYS WITH YOU UNTIL THE FINAL DECISION',
+      detail: 'ONE CASE WILL STAND ALONE AS YOUR PERSONAL CASE',
     })
-    play('intro')
+    setScene('round-intro')
+    play('transition')
+    schedule(() => {
+      setScene('board')
+      play('round')
+    }, 1700)
   }
 
-  function restartToLobby() {
-    if (revealTimer.current) window.clearTimeout(revealTimer.current)
-    if (offerTimer.current) window.clearTimeout(offerTimer.current)
-    if (bannerTimer.current) window.clearTimeout(bannerTimer.current)
+  function exitShow() {
+    clearTimers()
     setGame(createNewGame())
-    setCounterAsk('')
-    setCounterError('')
-    setReveal(null)
-    setOfferReady(false)
-    setStageBanner(null)
-    setView('lobby')
+    setPendingReveal(null)
+    setAmountVisible(false)
+    setRoundCard(null)
+    setScene('lobby')
   }
 
-  function chooseBox(boxId: number) {
+  function choosePersonalCase(boxId: number) {
     const next = selectBox(game, boxId)
     if (next === game) return
     setGame(next)
+    setDockMotion(true)
     play('select')
+    schedule(() => setDockMotion(false), 850)
+    schedule(() => play('round'), 420)
   }
 
-  function revealBox(boxId: number) {
-    if (reveal) return
+  function chooseCaseToOpen(boxId: number) {
     const box = game.boxes.find((candidate) => candidate.id === boxId)
     const next = openBox(game, boxId)
     if (!box || next === game) return
 
+    clearTimers()
+    const reveal = { boxId, reward: box.reward, roundIndex: game.roundIndex }
     setGame(next)
-    setReveal({ boxId, reward: box.reward })
-    play('reveal')
-    revealTimer.current = window.setTimeout(() => {
-      setReveal(null)
+    setPendingReveal(reveal)
+    setAmountVisible(false)
+    setScene('hostess-reveal')
+    play('transition')
+
+    schedule(() => {
+      setAmountVisible(true)
+      play('reveal')
+    }, 1050)
+
+    schedule(() => {
+      setScene('elimination')
+      play('eliminate')
+    }, 3000)
+
+    schedule(() => {
       if (next.phase === 'offer') {
-        setOfferReady(false)
-        setView('offer')
-        play('ring')
-        if (offerTimer.current) window.clearTimeout(offerTimer.current)
-        offerTimer.current = window.setTimeout(() => {
-          setOfferReady(true)
-          play('counter')
-        }, 1650)
+        setScene('offer')
+        play('offerPrompt')
+      } else {
+        setScene('board')
+        play('transition')
       }
-    }, 1450)
+    }, 5400)
   }
 
-  function deal() {
-    if (!offerReady) return
+  function acceptDeal() {
+    clearTimers()
     const next = acceptCurrentOffer(game)
+    if (next === game) return
     setGame(next)
-    setCounterAsk('')
-    setView('settlement')
-    play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'deal')
+    play('deal')
+    beginFinalReveal(next)
   }
 
-  function hold() {
-    if (!offerReady) return
+  function rejectDeal() {
+    clearTimers()
     const next = holdOffer(game)
+    if (next === game) return
     setGame(next)
-    setCounterAsk('')
-    setCounterError('')
-    if (next.phase === 'ended') {
-      setView('settlement')
-      play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'lose')
-    } else {
-      setOfferReady(false)
-      setView('stage')
-      showStageBanner({
-        kicker: `ROUND ${next.roundIndex + 1}`,
-        title: `OPEN ${getBoxesLeftToOpenThisRound(next)} CASES`,
-        detail: 'EVERY REVEAL CHANGES THE BANK OFFER',
-      })
-      play('hold')
-    }
-  }
+    play('noDeal')
 
-  function submitCounter() {
-    if (!offerReady) return
-    const amount = Number(counterAsk)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setCounterError('Enter a valid CAP amount.')
+    if (next.phase === 'ended') {
+      beginFinalReveal(next)
       return
     }
 
-    const next = makeCounterOffer(game, amount)
-    setGame(next)
-    setCounterError('')
-    if (next.phase === 'ended') {
-      setView('settlement')
-      play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'deal')
-    } else if (next.lastCounter?.kind === 'rejected') {
-      play('reject')
-    } else {
-      play('counter')
-    }
+    setRoundCard({
+      kicker: `ROUND ${next.roundIndex + 1}`,
+      title: `OPEN ${getBoxesLeftToOpenThisRound(next)} CASES`,
+      detail: 'EVERY CASE CHANGES THE NEXT CAPITALIST OFFER',
+    })
+    setScene('round-intro')
+    schedule(() => {
+      setScene('board')
+      play('round')
+    }, 1750)
   }
 
-  function seedCounter() {
-    if (!offerReady) return
-    if (!game.currentOffer) return
-    const ask = game.currentOffer.amount +
-      (game.currentOffer.ev - game.currentOffer.amount) * 0.55
-    setCounterAsk(String(Math.max(1, Math.round(ask))))
-    setCounterError('')
-    play('select')
+  function beginFinalReveal(next: GameState) {
+    setAmountVisible(false)
+    setScene('final-reveal')
+    play('transition')
+
+    schedule(() => {
+      setAmountVisible(true)
+      play('finalReveal')
+    }, 1250)
+
+    schedule(() => {
+      setScene('result')
+      play(didBeatLastOffer(next) ? 'champion' : 'clown')
+    }, 3900)
   }
 
-  if (view === 'lobby') {
+  if (scene === 'lobby') {
     return (
       <Lobby
         muted={muted}
@@ -207,51 +221,39 @@ function App() {
   }
 
   return (
-    <main className={`show-app view-${view}`}>
-      <ShowChrome
-        game={game}
-        ev={ev}
-        round={round}
+    <main className="show-shell">
+      <ShowHeader
+        scene={scene}
         muted={muted}
         onToggleSound={() => setMuted(!muted)}
-        onExit={restartToLobby}
+        onExit={exitShow}
       />
 
-      <div className="scene-transition" key={view}>
-        {view === 'stage' ? (
-          <StageScene
+      <div className={`scene scene-${scene}`} key={scene}>
+        {scene === 'round-intro' && roundCard ? <RoundIntro card={roundCard} /> : null}
+        {scene === 'board' ? (
+          <BoardScene
             game={game}
-            boxesLeft={boxesLeft}
-            revealLocked={reveal !== null}
-            onChoose={chooseBox}
-            onReveal={revealBox}
+            ev={ev}
+            dockMotion={dockMotion}
+            onChoosePersonal={choosePersonalCase}
+            onChooseCase={chooseCaseToOpen}
           />
         ) : null}
-
-        {view === 'offer' ? (
-          <OfferScene
-            game={game}
-            ready={offerReady}
-            counterAsk={counterAsk}
-            counterError={counterError}
-            onCounterAskChange={(value) => {
-              setCounterAsk(value)
-              setCounterError('')
-            }}
-            onDeal={deal}
-            onHold={hold}
-            onCounter={submitCounter}
-            onMark={seedCounter}
-          />
+        {scene === 'hostess-reveal' && pendingReveal ? (
+          <HostessReveal reveal={pendingReveal} amountVisible={amountVisible} />
         ) : null}
-
-        {view === 'settlement' ? (
-          <SettlementScene game={game} onRestart={startShow} />
+        {scene === 'elimination' && pendingReveal ? (
+          <EliminationScene game={game} reveal={pendingReveal} />
         ) : null}
+        {scene === 'offer' ? (
+          <OfferScene game={game} onDeal={acceptDeal} onNoDeal={rejectDeal} />
+        ) : null}
+        {scene === 'final-reveal' ? (
+          <FinalReveal game={game} amountVisible={amountVisible} />
+        ) : null}
+        {scene === 'result' ? <ResultScene game={game} onRestart={startShow} /> : null}
       </div>
-
-      {reveal ? <RevealOverlay reveal={reveal} /> : null}
-      {stageBanner ? <StageBannerOverlay banner={stageBanner} /> : null}
     </main>
   )
 }
@@ -266,30 +268,28 @@ function Lobby({
   onStart: () => void
 }) {
   return (
-    <main className="lobby-screen">
-      <img className="lobby-backdrop" src={showStage} alt="The Capitalist game show stage" />
-      <div className="lobby-shade" />
-      <div className="marquee-wall" aria-hidden="true" />
-      <div className="audience-silhouette" aria-hidden="true" />
+    <main className="lobby">
+      <img src={showStage} alt="THE CAPITALIST illuminated game show stage" />
+      <div className="lobby-overlay" />
+      <div className="light-wall" aria-hidden="true" />
+      <div className="crowd" aria-hidden="true" />
       <button
-        className="lobby-sound icon-button"
+        className="icon-button lobby-volume"
         type="button"
         onClick={onToggleSound}
         aria-label={muted ? 'Turn sound on' : 'Mute sound'}
       >
-        {muted ? <VolumeX size={21} /> : <Volume2 size={21} />}
+        {muted ? <VolumeX size={22} /> : <Volume2 size={22} />}
       </button>
-
-      <section className="lobby-copy">
+      <section className="lobby-content">
         <p>WELCOME TO</p>
-        <div className="show-logo-lockup">
-          <img className="lobby-mark" src="/capitalist-mark.svg" alt="" />
+        <div className="brand-plaque">
+          <img src="/capitalist-mark.svg" alt="" />
           <h1><span>THE</span> CAPITALIST</h1>
-          <b>THE ULTIMATE NEGOTIATION SHOW</b>
+          <b>EVERY DECISION HAS A PRICE</b>
         </div>
-        <span>Twenty cases. One personal case. Every decision has a price.</span>
-        <button className="enter-show" type="button" onClick={onStart}>
-          <Sparkles size={20} /> TAP TO PLAY <ChevronRight size={20} />
+        <button className="primary-cta" type="button" onClick={onStart}>
+          <Sparkles size={21} /> TAP TO PLAY <ChevronRight size={21} />
         </button>
         <small>VIRTUAL CAP ONLY / NO CASH-OUT / NO TRADABLE REWARDS</small>
       </section>
@@ -297,37 +297,30 @@ function Lobby({
   )
 }
 
-function ShowChrome({
-  game,
-  ev,
-  round,
+function ShowHeader({
+  scene,
   muted,
   onToggleSound,
   onExit,
 }: {
-  game: GameState
-  ev: number
-  round: number
+  scene: ShowScene
   muted: boolean
   onToggleSound: () => void
   onExit: () => void
 }) {
+  const label = scene.replaceAll('-', ' ').toUpperCase()
   return (
-    <header className="show-chrome">
-      <div className="chrome-brand">
+    <header className="show-header">
+      <div className="header-brand">
         <img src="/capitalist-mark.svg" alt="" />
         <strong>THE CAPITALIST</strong>
       </div>
-      <div className="chrome-stats">
-        <span><small>ROUND</small>{round}/{ROUND_OPEN_COUNTS.length}</span>
-        <span><small>MARKET EV</small>{formatCap(ev)}</span>
-        <span><small>LIVE</small>{game.boxes.length - game.openedBoxIds.length}</span>
-      </div>
-      <div className="chrome-actions">
+      <span>{label}</span>
+      <div className="header-actions">
         <button className="icon-button" type="button" onClick={onToggleSound} aria-label={muted ? 'Turn sound on' : 'Mute sound'}>
           {muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
         </button>
-        <button className="icon-button" type="button" onClick={onExit} aria-label="Exit show">
+        <button className="icon-button" type="button" onClick={onExit} aria-label="Restart show">
           <RotateCcw size={19} />
         </button>
       </div>
@@ -335,238 +328,224 @@ function ShowChrome({
   )
 }
 
-function StageScene({
-  game,
-  boxesLeft,
-  revealLocked,
-  onChoose,
-  onReveal,
-}: {
-  game: GameState
-  boxesLeft: number
-  revealLocked: boolean
-  onChoose: (boxId: number) => void
-  onReveal: (boxId: number) => void
-}) {
+function RoundIntro({ card }: { card: RoundCard }) {
   return (
-    <section className="stage-screen">
-      <div className="marquee-wall" aria-hidden="true" />
-      <div className="stage-lights" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></div>
-      <div className="audience-silhouette" aria-hidden="true" />
-      <PrizeTower game={game} side="low" />
-
-      <div className="vault-stage">
-        <div className="stage-callout">
-          <p>{game.phase === 'selecting' ? 'CHOOSE YOUR PERSONAL CASE' : `ROUND ${game.roundIndex + 1}`}</p>
-          <h2>
-            {game.phase === 'selecting'
-              ? 'This will be your case.'
-              : `Open ${boxesLeft} case${boxesLeft === 1 ? '' : 's'}.`}
-          </h2>
-          <span>
-            {game.phase === 'selecting'
-              ? 'Its value stays hidden until you make a deal or reach the final reveal.'
-              : 'Each reveal removes a possible reward and reprices the offer.'}
-          </span>
-        </div>
-
-        <div className="vault-grid" aria-label="Vault stage">
-          {game.boxes.map((box) => (
-            <VaultButton
-              key={box.id}
-              box={box}
-              status={getBoxStatus(game, box.id)}
-              phase={game.phase}
-              revealLocked={revealLocked}
-              onSelect={onChoose}
-              onOpen={onReveal}
-            />
-          ))}
-        </div>
-
-        <div className={`private-podium ${game.selectedBoxId ? 'is-set' : ''}`}>
-          <span><Crown size={18} /> YOUR PERSONAL CASE</span>
-          <strong>{game.selectedBoxId ? `#${String(game.selectedBoxId).padStart(2, '0')}` : 'NOT SELECTED'}</strong>
-        </div>
+    <section className="round-intro full-scene">
+      <div className="light-wall" aria-hidden="true" />
+      <div className="crowd" aria-hidden="true" />
+      <div className="round-card">
+        <BriefcaseBusiness size={38} strokeWidth={1.5} />
+        <p>{card.kicker}</p>
+        <h2>{card.title}</h2>
+        <span>{card.detail}</span>
       </div>
-
-      <PrizeTower game={game} side="high" />
     </section>
   )
 }
 
-function PrizeTower({ game, side }: { game: GameState; side: 'low' | 'high' }) {
-  const ordered = game.boxes.map((box) => box.reward).sort((a, b) => a - b)
-  const values = side === 'low' ? ordered.slice(0, 10).reverse() : ordered.slice(10).reverse()
-  const openedRewards = new Set(
+function BoardScene({
+  game,
+  ev,
+  dockMotion,
+  onChoosePersonal,
+  onChooseCase,
+}: {
+  game: GameState
+  ev: number
+  dockMotion: boolean
+  onChoosePersonal: (boxId: number) => void
+  onChooseCase: (boxId: number) => void
+}) {
+  const choosingPersonal = game.phase === 'selecting'
+  const boxesLeft = getBoxesLeftToOpenThisRound(game)
+  const liveCases = game.boxes.filter(
+    (box) => box.id !== game.selectedBoxId && !game.openedBoxIds.includes(box.id),
+  )
+
+  return (
+    <section className="board-scene full-scene">
+      <div className="light-wall" aria-hidden="true" />
+      <div className="crowd" aria-hidden="true" />
+
+      {game.selectedBoxId ? (
+        <div className={`personal-case-dock ${dockMotion ? 'dock-motion' : ''}`}>
+          <Crown size={18} />
+          <span><small>YOUR CASE</small>#{String(game.selectedBoxId).padStart(2, '0')}</span>
+          <CaseGraphic boxId={game.selectedBoxId} compact />
+        </div>
+      ) : null}
+
+      <div className="board-copy">
+        <p>{choosingPersonal ? 'FIRST DECISION' : `ROUND ${game.roundIndex + 1} / ${ROUND_OPEN_COUNTS.length}`}</p>
+        <h1>{choosingPersonal ? 'CHOOSE YOUR PERSONAL CASE' : `CHOOSE ${boxesLeft} CASE${boxesLeft === 1 ? '' : 'S'} TO OPEN`}</h1>
+        <span>{choosingPersonal ? 'Your case will move above the board and remain sealed.' : `LIVE MARKET EV ${formatCap(ev)}`}</span>
+      </div>
+
+      <div className={`case-grid ${choosingPersonal ? 'grid-twenty' : ''}`}>
+        {(choosingPersonal ? game.boxes : liveCases).map((box) => (
+          <button
+            className="case-choice"
+            type="button"
+            key={box.id}
+            onClick={() => choosingPersonal ? onChoosePersonal(box.id) : onChooseCase(box.id)}
+            aria-label={`${choosingPersonal ? 'Choose' : 'Open'} case ${box.id}`}
+          >
+            <CaseGraphic boxId={box.id} />
+          </button>
+        ))}
+      </div>
+
+      {!choosingPersonal ? (
+        <div className="round-meter" aria-label={`${boxesLeft} cases left to open this round`}>
+          <span>{boxesLeft}</span> CASES LEFT THIS ROUND
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function HostessReveal({
+  reveal,
+  amountVisible,
+}: {
+  reveal: PendingReveal
+  amountVisible: boolean
+}) {
+  return (
+    <section className="hostess-scene full-scene">
+      <div className="light-wall" aria-hidden="true" />
+      <div className="crowd" aria-hidden="true" />
+      <div className="hostess-copy">
+        <p>LIVE CASE OPENING</p>
+        <h1>CASE #{String(reveal.boxId).padStart(2, '0')}</h1>
+      </div>
+      <CastSprite kind="hostess" index={reveal.roundIndex} />
+      <div className={`reveal-case ${amountVisible ? 'is-open' : ''}`}>
+        <span className="reveal-case-lid"><BriefcaseBusiness size={42} /></span>
+        <span className="reveal-case-body">
+          {amountVisible ? formatCap(reveal.reward) : 'SEALED'}
+        </span>
+      </div>
+      <div className={`amount-flash ${amountVisible ? 'is-visible' : ''}`}>
+        <small>CASE CONTAINED</small>
+        <strong className={`tier-${getRewardTier(reveal.reward)}`}>{formatCap(reveal.reward)}</strong>
+      </div>
+    </section>
+  )
+}
+
+function EliminationScene({ game, reveal }: { game: GameState; reveal: PendingReveal }) {
+  const removedRewards = new Set(
     game.openedBoxIds
       .map((id) => game.boxes.find((box) => box.id === id)?.reward)
       .filter((reward): reward is number => reward !== undefined),
   )
 
   return (
-    <aside className={`prize-tower prize-${side}`} aria-label={`${side} reward values`}>
-      <div className="tower-title"><Landmark size={15} /> {side === 'low' ? 'BASE' : 'PREMIUM'}</div>
-      {values.map((value) => (
-        <span className={`${openedRewards.has(value) ? 'removed' : ''} tier-${getRewardTier(value)}`} key={value}>
-          {formatCap(value).replace(' CAP', '')}
-        </span>
-      ))}
-    </aside>
+    <section className="elimination-scene full-scene">
+      <div className="elimination-title">
+        <X size={34} />
+        <p>REMOVED FROM THE GAME</p>
+        <h1>{formatCap(reveal.reward)}</h1>
+      </div>
+      <RewardBoard removedRewards={removedRewards} justRemoved={reveal.reward} />
+      <div className="elimination-stamp">ELIMINATED</div>
+    </section>
   )
 }
 
 function OfferScene({
   game,
-  ready,
-  counterAsk,
-  counterError,
-  onCounterAskChange,
   onDeal,
-  onHold,
-  onCounter,
-  onMark,
+  onNoDeal,
 }: {
   game: GameState
-  ready: boolean
-  counterAsk: string
-  counterError: string
-  onCounterAskChange: (value: string) => void
   onDeal: () => void
-  onHold: () => void
-  onCounter: () => void
-  onMark: () => void
+  onNoDeal: () => void
 }) {
   const offer = game.currentOffer
   if (!offer) return null
+  const capitalist = CAPITALISTS[Math.min(game.roundIndex, CAPITALISTS.length - 1)]
 
   return (
-    <section className="offer-screen">
-      <div className={`offer-stage-panel ${ready ? 'offer-ready' : 'offer-ringing'}`}>
-        <div className="marquee-wall" aria-hidden="true" />
-        <div className="audience-silhouette" aria-hidden="true" />
-
-        <div className="bank-offer-board">
-          <span>{ready ? 'BANK OFFER' : 'INCOMING CALL'}</span>
-          <strong>{ready ? formatCap(offer.amount) : 'CALCULATING...'}</strong>
-        </div>
-
-        <div className="bank-phone" aria-hidden="true">
-          <span className="phone-handset"><PhoneCall size={86} strokeWidth={1.5} /></span>
-          <span className="phone-dial"><i /><i /><i /><i /><i /><i /></span>
-        </div>
-
-      <div className="offer-portrait-wrap">
-        <img src={capitalistPortrait} alt="The Capitalist" />
-        <div className="portrait-scan" />
-        <span><i /> RISK DESK · LIVE</span>
+    <section className="capitalist-scene full-scene">
+      <div className="capitalist-backdrop" aria-hidden="true" />
+      <div className="capitalist-profile">
+        <CastSprite kind="capitalist" index={game.roundIndex} />
+        <span>CAPITALIST {game.roundIndex + 1} / {CAPITALISTS.length}</span>
       </div>
-
-        <div className="personal-case-chip">
-          <BriefcaseBusiness size={22} />
-          <span><small>PERSONAL CASE</small>#{String(game.selectedBoxId ?? 0).padStart(2, '0')}</span>
-        </div>
-
-        <PrizeTower game={game} side="high" />
-      </div>
-
-      <div className="offer-console">
-        <div className="incoming-call"><PhoneCall size={20} /> {ready ? 'OFFER RECEIVED' : 'CONNECTING'} / ROUND {offer.round}</div>
-        <p>{ready ? 'THE CAPITALIST IS WAITING FOR YOUR DECISION' : 'THE BANK IS PRICING YOUR CASE'}</p>
-        <h2>{ready ? 'YOUR MOVE' : 'STAND BY'}</h2>
-        <div className={`call-progress ${ready ? 'is-ready' : ''}`} aria-hidden="true"><span /></div>
-        <div className="offer-metrics">
-          <span><small>EXPECTED VALUE</small>{formatCap(offer.ev)}</span>
-          <span><small>OFFER / EV</small>{Math.round(offer.multiplier * 100)}%</span>
-          <span><small>PRESSURE</small>{offer.pressure.toUpperCase()}</span>
-        </div>
+      <div className="offer-panel">
+        <div className="offer-live"><i /> LIVE OFFER</div>
+        <p>{capitalist.title}</p>
+        <h1>{capitalist.name}</h1>
         <blockquote>"{offer.quote}"</blockquote>
-
-        {game.lastCounter ? (
-          <div className={`counter-response ${game.lastCounter.kind}`}>
-            <strong>{game.lastCounter.kind.toUpperCase()}</strong>
-            <span>{game.lastCounter.note}</span>
-          </div>
-        ) : null}
-
-        <div className="decision-row">
-          <button className="deal-action" type="button" onClick={onDeal} disabled={!ready}>
-            <Check size={22} />
-            <span><small>LOCK THE PRICE</small>DEAL</span>
+        <div className="offer-amount">
+          <small>THE OFFER IS</small>
+          <strong>{formatCap(offer.amount)}</strong>
+          <span>{Math.round(offer.multiplier * 100)}% OF MARKET EV</span>
+        </div>
+        <div className="deal-question"><PhoneCall size={24} /> DEAL OR NO DEAL?</div>
+        <div className="deal-actions">
+          <button className="deal-button" type="button" onClick={onDeal}>
+            <Check size={25} /> <span><small>TAKE THE MONEY</small>DEAL</span>
           </button>
-          <button className="hold-action" type="button" onClick={onHold} disabled={!ready}>
-            <Shield size={22} />
-            <span><small>RETURN TO THE STAGE</small>HOLD</span>
+          <button className="no-deal-button" type="button" onClick={onNoDeal}>
+            <X size={25} /> <span><small>PLAY THE NEXT ROUND</small>NO DEAL</span>
           </button>
         </div>
-
-        <div className="counter-console">
-          <label htmlFor="counter-offer">COUNTER THE DESK</label>
-          <div>
-            <input
-              id="counter-offer"
-              min="1"
-              inputMode="numeric"
-              type="number"
-              disabled={!ready}
-              value={counterAsk}
-              onChange={(event) => onCounterAskChange(event.target.value)}
-              placeholder="Enter CAP amount"
-            />
-            <button type="button" onClick={onMark} disabled={!ready}>MARK</button>
-            <button type="button" onClick={onCounter} disabled={!ready}><TrendingUp size={17} /> SEND</button>
-          </div>
-          {counterError ? <span className="input-error">{counterError}</span> : null}
-        </div>
-
-        <OfferTape game={game} />
       </div>
     </section>
   )
 }
 
-function OfferTape({ game }: { game: GameState }) {
-  if (game.offerHistory.length === 0) return null
+function FinalReveal({ game, amountVisible }: { game: GameState; amountVisible: boolean }) {
+  const personalBox = game.boxes.find((box) => box.id === game.selectedBoxId)
+  if (!personalBox || !game.settlement) return null
+
   return (
-    <div className="offer-tape" aria-label="Offer history">
-      <span>OFFER HISTORY</span>
-      {game.offerHistory.map((offer, index) => (
-        <b key={`${offer.round}-${index}`}>R{offer.round} · {formatCap(offer.amount)}</b>
-      ))}
-    </div>
+    <section className="final-reveal-scene full-scene">
+      <div className="light-wall" aria-hidden="true" />
+      <div className="final-copy">
+        <p>FINAL REVEAL</p>
+        <h1>YOUR PERSONAL CASE</h1>
+        <span>#{String(personalBox.id).padStart(2, '0')}</span>
+      </div>
+      <div className={`final-case ${amountVisible ? 'is-open' : ''}`}>
+        <span className="final-case-lid"><Crown size={38} /></span>
+        <span className="final-case-body">
+          {amountVisible ? formatCap(personalBox.reward) : 'OPENING...'}
+        </span>
+      </div>
+      {amountVisible ? (
+        <div className="final-comparison">
+          <span><small>YOUR PAYOUT</small>{formatCap(game.settlement.payout)}</span>
+          <b>VS</b>
+          <span><small>CASE VALUE</small>{formatCap(personalBox.reward)}</span>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
-function SettlementScene({ game, onRestart }: { game: GameState; onRestart: () => void }) {
+function ResultScene({ game, onRestart }: { game: GameState; onRestart: () => void }) {
   const settlement = game.settlement
   if (!settlement) return null
-  const edge = settlement.payout - settlement.personalBoxReward
+  const lastOffer = game.offerHistory.at(-1)?.amount ?? 0
+  const champion = didBeatLastOffer(game)
 
   return (
-    <section className={`settlement-screen result-${settlement.ratingEmoji === '🗿' ? 'win' : 'loss'}`}>
-      <div className="settlement-beams" aria-hidden="true"><i /><i /><i /></div>
-      <div className="result-icon">{settlement.ratingEmoji}</div>
-      <p>FINAL SETTLEMENT</p>
-      <h2>{settlement.grade}</h2>
-      <span className="result-note">{settlement.note}</span>
-
-      <div className="result-comparison">
-        <div>
-          <small>YOUR PAYOUT</small>
-          <strong>{formatCap(settlement.payout)}</strong>
-        </div>
-        <div className="versus">VS</div>
-        <div>
-          <small>PRIVATE VAULT</small>
-          <strong>{formatCap(settlement.personalBoxReward)}</strong>
-        </div>
+    <section className={`result-scene full-scene ${champion ? 'is-champion' : 'is-clown'}`}>
+      {champion ? <ChampionPerformance /> : <ClownPerformance />}
+      <p>{champion ? 'YOU BEAT THE CAPITALIST' : 'THE CAPITALIST HAD THE BETTER DEAL'}</p>
+      <h1>{champion ? 'YOU ARE THE CHAMPION' : 'YOU LEFT MONEY ON THE TABLE'}</h1>
+      <div className="result-ledger">
+        <span><small>YOU RECEIVED</small>{formatCap(settlement.payout)}</span>
+        <span><small>LAST OFFER</small>{formatCap(lastOffer)}</span>
+        <span className={settlement.payout - lastOffer >= 0 ? 'positive' : 'negative'}>
+          <small>DECISION EDGE</small>
+          {settlement.payout - lastOffer >= 0 ? '+' : ''}{formatCap(settlement.payout - lastOffer)}
+        </span>
       </div>
-
-      <div className={`decision-edge ${edge >= 0 ? 'positive' : 'negative'}`}>
-        <Trophy size={19} /> DECISION EDGE&nbsp;
-        <strong>{edge >= 0 ? '+' : ''}{formatCap(edge)}</strong>
-      </div>
-
       <button className="play-again" type="button" onClick={onRestart}>
         <RotateCcw size={20} /> PLAY ANOTHER SHOW
       </button>
@@ -574,85 +553,77 @@ function SettlementScene({ game, onRestart }: { game: GameState; onRestart: () =
   )
 }
 
-function StageBannerOverlay({ banner }: { banner: StageBannerState }) {
+function ChampionPerformance() {
   return (
-    <div className="stage-banner-overlay" role="status" aria-live="polite">
-      <div className="banner-light-wall" aria-hidden="true" />
-      <div className="stage-banner-copy">
-        <BriefcaseBusiness size={34} strokeWidth={1.5} />
-        <p>{banner.kicker}</p>
-        <strong>{banner.title}</strong>
-        <span>{banner.detail}</span>
-      </div>
+    <div className="champion-performance" aria-label="Victory celebration">
+      <span className="confetti c1" /><span className="confetti c2" />
+      <span className="confetti c3" /><span className="confetti c4" />
+      <span className="confetti c5" /><span className="confetti c6" />
+      <Trophy size={92} strokeWidth={1.25} />
+      <strong>CHAMPION</strong>
     </div>
   )
 }
 
-function RevealOverlay({ reveal }: { reveal: RevealState }) {
+function ClownPerformance() {
   return (
-    <div className="reveal-overlay" role="status" aria-live="assertive">
-      <div className="reveal-spotlight" />
-      <div className="opening-vault">
-        <div className="vault-lid"><BriefcaseBusiness size={38} /></div>
-        <div className="vault-body"><span>{String(reveal.boxId).padStart(2, '0')}</span></div>
-      </div>
-      <p>VAULT {String(reveal.boxId).padStart(2, '0')} CONTAINED</p>
-      <strong className={`tier-${getRewardTier(reveal.reward)}`}>{formatCap(reveal.reward)}</strong>
-      <span>REMOVED FROM THE BOARD</span>
+    <div className="clown-performance" aria-label="Clown pinching its nose">
+      <span className="clown-face">🤡</span>
+      <span className="pinch-hand">🤏</span>
+      <span className="comic-pop">HONK!</span>
     </div>
   )
 }
 
-interface VaultButtonProps {
-  box: PrizeBox
-  status: BoxStatus
-  phase: GameState['phase']
-  revealLocked: boolean
-  onSelect: (boxId: number) => void
-  onOpen: (boxId: number) => void
-}
-
-function VaultButton({
-  box,
-  status,
-  phase,
-  revealLocked,
-  onSelect,
-  onOpen,
-}: VaultButtonProps) {
-  const opened = status === 'opened'
-  const disabled = revealLocked || opened || phase === 'offer' ||
-    (phase === 'opening' && status === 'chosen')
-
-  function handleClick() {
-    if (phase === 'selecting') onSelect(box.id)
-    else if (phase === 'opening') onOpen(box.id)
-  }
-
+function RewardBoard({
+  removedRewards,
+  justRemoved,
+}: {
+  removedRewards: Set<number>
+  justRemoved?: number
+}) {
   return (
-    <button
-      className={`show-vault ${status} ${opened ? `tier-${getRewardTier(box.reward)}` : ''}`}
-      type="button"
-      disabled={disabled}
-      onClick={handleClick}
-      aria-label={`Vault ${box.id}${status === 'chosen' ? ', your private vault' : ''}`}
-    >
-      <span className="case-handle" />
-      <span className="case-face">
-        <b>{String(box.id).padStart(2, '0')}</b>
-        <BriefcaseBusiness size={18} strokeWidth={1.7} />
-      </span>
-      <span className="case-value">
-        {opened ? formatCap(box.reward) : status === 'chosen' ? 'YOURS' : 'SEALED'}
-      </span>
-    </button>
+    <div className="reward-board">
+      {REWARD_LADDER.map((reward) => (
+        <span
+          className={`${removedRewards.has(reward) ? 'removed' : ''} ${reward === justRemoved ? 'just-removed' : ''} tier-${getRewardTier(reward)}`}
+          key={reward}
+        >
+          {formatCap(reward)}
+        </span>
+      ))}
+    </div>
   )
 }
 
-function getBoxStatus(game: GameState, boxId: number): BoxStatus {
-  if (game.openedBoxIds.includes(boxId)) return 'opened'
-  if (game.selectedBoxId === boxId) return 'chosen'
-  return 'available'
+function CaseGraphic({ boxId, compact = false }: { boxId: number; compact?: boolean }) {
+  return (
+    <span className={`case-graphic ${compact ? 'compact' : ''}`}>
+      <i className="case-handle" />
+      <b>{String(boxId).padStart(2, '0')}</b>
+    </span>
+  )
+}
+
+function CastSprite({ kind, index }: { kind: 'hostess' | 'capitalist'; index: number }) {
+  const safeIndex = Math.min(Math.max(index, 0), 5)
+  return (
+    <div
+      className={`cast-sprite cast-${kind}`}
+      style={{
+        backgroundImage: `url(${castSprite})`,
+        backgroundPosition: `${safeIndex * 20}% ${kind === 'hostess' ? '0%' : '100%'}`,
+      }}
+      role="img"
+      aria-label={kind === 'hostess' ? `Round ${safeIndex + 1} case presenter` : CAPITALISTS[safeIndex].name}
+    />
+  )
+}
+
+function didBeatLastOffer(game: GameState) {
+  const payout = game.settlement?.payout ?? 0
+  const lastOffer = game.offerHistory.at(-1)?.amount ?? 0
+  return payout >= lastOffer
 }
 
 export default App
