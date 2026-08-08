@@ -1,18 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BriefcaseBusiness,
   Check,
   ChevronRight,
-  LockKeyhole,
+  Crown,
+  Landmark,
+  PhoneCall,
   RotateCcw,
   Shield,
+  Sparkles,
   TrendingUp,
-  UnlockKeyhole,
+  Trophy,
   Volume2,
   VolumeX,
 } from 'lucide-react'
 import './App.css'
 import capitalistPortrait from './assets/capitalist-portrait.jpg'
+import showStage from './assets/show-stage.jpg'
 import { useGameAudio } from './useGameAudio'
 import {
   acceptCurrentOffer,
@@ -29,179 +33,159 @@ import {
 } from '@the-capitalist/core'
 import type { BoxStatus, GameState, PrizeBox } from '@the-capitalist/core'
 
+type ShowView = 'lobby' | 'stage' | 'offer' | 'settlement'
+
+interface RevealState {
+  boxId: number
+  reward: number
+}
+
 function App() {
   const [game, setGame] = useState<GameState>(() => createNewGame())
+  const [view, setView] = useState<ShowView>('lobby')
+  const [reveal, setReveal] = useState<RevealState | null>(null)
   const [counterAsk, setCounterAsk] = useState('')
   const [counterError, setCounterError] = useState('')
-  const [lastRevealId, setLastRevealId] = useState<number | null>(null)
+  const revealTimer = useRef<number | null>(null)
   const { muted, play, setMuted } = useGameAudio()
   const ev = useMemo(() => calculateEV(game), [game])
-  const boxesLeftThisRound = getBoxesLeftToOpenThisRound(game)
-  const roundNumber = Math.min(game.roundIndex + 1, ROUND_OPEN_COUNTS.length)
-  const totalToOpen = ROUND_OPEN_COUNTS.reduce((sum, count) => sum + count, 0)
-  const progress = (game.openedBoxIds.length / totalToOpen) * 100
-  const lastReveal = game.boxes.find((box) => box.id === lastRevealId)
+  const boxesLeft = getBoxesLeftToOpenThisRound(game)
+  const round = Math.min(game.roundIndex + 1, ROUND_OPEN_COUNTS.length)
 
-  function restart() {
+  useEffect(() => {
+    return () => {
+      if (revealTimer.current) window.clearTimeout(revealTimer.current)
+    }
+  }, [])
+
+  function startShow() {
     setGame(createNewGame())
     setCounterAsk('')
     setCounterError('')
-    setLastRevealId(null)
-    play('select')
+    setReveal(null)
+    setView('stage')
+    play('intro')
+  }
+
+  function restartToLobby() {
+    if (revealTimer.current) window.clearTimeout(revealTimer.current)
+    setGame(createNewGame())
+    setCounterAsk('')
+    setCounterError('')
+    setReveal(null)
+    setView('lobby')
   }
 
   function chooseBox(boxId: number) {
-    setGame((current) => selectBox(current, boxId))
+    const next = selectBox(game, boxId)
+    if (next === game) return
+    setGame(next)
     play('select')
   }
 
   function revealBox(boxId: number) {
-    setGame((current) => {
-      const next = openBox(current, boxId)
-      if (next !== current) {
-        setLastRevealId(boxId)
-        play(next.phase === 'offer' ? 'offer' : 'open')
+    if (reveal) return
+    const box = game.boxes.find((candidate) => candidate.id === boxId)
+    const next = openBox(game, boxId)
+    if (!box || next === game) return
+
+    setGame(next)
+    setReveal({ boxId, reward: box.reward })
+    play('reveal')
+    revealTimer.current = window.setTimeout(() => {
+      setReveal(null)
+      if (next.phase === 'offer') {
+        setView('offer')
+        play('ring')
       }
-      return next
-    })
+    }, 1450)
   }
 
   function deal() {
-    setGame((current) => acceptCurrentOffer(current))
+    const next = acceptCurrentOffer(game)
+    setGame(next)
     setCounterAsk('')
-    play('deal')
+    setView('settlement')
+    play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'deal')
   }
 
   function hold() {
-    setGame((current) => holdOffer(current))
+    const next = holdOffer(game)
+    setGame(next)
     setCounterAsk('')
     setCounterError('')
-    setLastRevealId(null)
-    play('hold')
+    if (next.phase === 'ended') {
+      setView('settlement')
+      play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'lose')
+    } else {
+      setView('stage')
+      play('hold')
+    }
   }
 
   function submitCounter() {
     const amount = Number(counterAsk)
-
     if (!Number.isFinite(amount) || amount <= 0) {
       setCounterError('Enter a valid CAP amount.')
       return
     }
 
-    setGame((current) => {
-      const next = makeCounterOffer(current, amount)
-      if (next.phase === 'ended') play('deal')
-      else if (next.lastCounter?.kind === 'rejected') play('reject')
-      else play('offer')
-      return next
-    })
+    const next = makeCounterOffer(game, amount)
+    setGame(next)
     setCounterError('')
+    if (next.phase === 'ended') {
+      setView('settlement')
+      play(next.settlement?.ratingEmoji === '🗿' ? 'win' : 'deal')
+    } else if (next.lastCounter?.kind === 'rejected') {
+      play('reject')
+    } else {
+      play('counter')
+    }
   }
 
   function seedCounter() {
     if (!game.currentOffer) return
-
-    const suggestedAsk =
-      game.currentOffer.amount + (game.currentOffer.ev - game.currentOffer.amount) * 0.55
-    setCounterAsk(String(Math.max(1, Math.round(suggestedAsk))))
+    const ask = game.currentOffer.amount +
+      (game.currentOffer.ev - game.currentOffer.amount) * 0.55
+    setCounterAsk(String(Math.max(1, Math.round(ask))))
     setCounterError('')
+    play('select')
+  }
+
+  if (view === 'lobby') {
+    return (
+      <Lobby
+        muted={muted}
+        onToggleSound={() => setMuted(!muted)}
+        onStart={startShow}
+      />
+    )
   }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#game" aria-label="THE CAPITALIST">
-          <img src="/capitalist-mark.svg" alt="" />
-          <span>
-            <strong>THE CAPITALIST</strong>
-            <small>RISK. PRICE. DECISION.</small>
-          </span>
-        </a>
+    <main className={`show-app view-${view}`}>
+      <ShowChrome
+        game={game}
+        ev={ev}
+        round={round}
+        muted={muted}
+        onToggleSound={() => setMuted(!muted)}
+        onExit={restartToLobby}
+      />
 
-        <div className="topbar-actions">
-          <span className="virtual-only">VIRTUAL CAP ONLY</span>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => setMuted(!muted)}
-            aria-label={muted ? 'Turn sound on' : 'Mute sound'}
-            title={muted ? 'Turn sound on' : 'Mute sound'}
-          >
-            {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={restart}
-            aria-label="New game"
-            title="New game"
-          >
-            <RotateCcw size={18} />
-          </button>
-        </div>
-      </header>
+      <div className="scene-transition" key={view}>
+        {view === 'stage' ? (
+          <StageScene
+            game={game}
+            boxesLeft={boxesLeft}
+            revealLocked={reveal !== null}
+            onChoose={chooseBox}
+            onReveal={revealBox}
+          />
+        ) : null}
 
-      <section className="market-strip" aria-label="Game status">
-        <div>
-          <span>MARKET EV</span>
-          <strong>{formatCap(ev)}</strong>
-        </div>
-        <div>
-          <span>ROUND</span>
-          <strong>{roundNumber} / {ROUND_OPEN_COUNTS.length}</strong>
-        </div>
-        <div>
-          <span>LIVE VAULTS</span>
-          <strong>{game.boxes.length - game.openedBoxIds.length}</strong>
-        </div>
-        <div>
-          <span>PRIVATE VAULT</span>
-          <strong>{game.selectedBoxId ? `#${String(game.selectedBoxId).padStart(2, '0')}` : 'UNSET'}</strong>
-        </div>
-      </section>
-
-      <div className="round-progress" aria-hidden="true">
-        <span style={{ width: `${progress}%` }} />
-      </div>
-
-      <section className="game-layout" id="game">
-        <section className="board-area" aria-labelledby="board-title">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">VAULT FLOOR / 20 POSITIONS</p>
-              <h1 id="board-title">{getStageTitle(game, boxesLeftThisRound)}</h1>
-            </div>
-            <div className={`phase-badge phase-${game.phase}`}>
-              <span />
-              {getPhaseLabel(game, boxesLeftThisRound)}
-            </div>
-          </div>
-
-          {lastReveal && game.phase !== 'ended' ? (
-            <div className={`reveal-tape tier-${getRewardTier(lastReveal.reward)}`}>
-              <span>VAULT {String(lastReveal.id).padStart(2, '0')} REMOVED</span>
-              <strong>{formatCap(lastReveal.reward)}</strong>
-            </div>
-          ) : null}
-
-          <div className="vault-grid">
-            {game.boxes.map((box) => (
-              <VaultButton
-                key={box.id}
-                box={box}
-                status={getBoxStatus(game, box.id)}
-                phase={game.phase}
-                onSelect={chooseBox}
-                onOpen={revealBox}
-              />
-            ))}
-          </div>
-
-          <OfferHistory game={game} />
-        </section>
-
-        <aside className="desk-column" aria-label="Capitalist desk">
-          <CapitalistPanel
+        {view === 'offer' ? (
+          <OfferScene
             game={game}
             counterAsk={counterAsk}
             counterError={counterError}
@@ -212,34 +196,174 @@ function App() {
             onDeal={deal}
             onHold={hold}
             onCounter={submitCounter}
-            onSeedCounter={seedCounter}
-            onRestart={restart}
+            onMark={seedCounter}
           />
-          <PrizeLedger game={game} />
-        </aside>
-      </section>
+        ) : null}
 
-      <footer>
-        <span>THE CAPITALIST MVP</span>
-        <span>Probability decision game. No real money, cash-out, or tradable rewards.</span>
-      </footer>
+        {view === 'settlement' ? (
+          <SettlementScene game={game} onRestart={startShow} />
+        ) : null}
+      </div>
+
+      {reveal ? <RevealOverlay reveal={reveal} /> : null}
     </main>
   )
 }
 
-interface CapitalistPanelProps {
-  game: GameState
-  counterAsk: string
-  counterError: string
-  onCounterAskChange: (value: string) => void
-  onDeal: () => void
-  onHold: () => void
-  onCounter: () => void
-  onSeedCounter: () => void
-  onRestart: () => void
+function Lobby({
+  muted,
+  onToggleSound,
+  onStart,
+}: {
+  muted: boolean
+  onToggleSound: () => void
+  onStart: () => void
+}) {
+  return (
+    <main className="lobby-screen">
+      <img className="lobby-backdrop" src={showStage} alt="The Capitalist game show stage" />
+      <div className="lobby-shade" />
+      <button
+        className="lobby-sound icon-button"
+        type="button"
+        onClick={onToggleSound}
+        aria-label={muted ? 'Turn sound on' : 'Mute sound'}
+      >
+        {muted ? <VolumeX size={21} /> : <Volume2 size={21} />}
+      </button>
+
+      <section className="lobby-copy">
+        <img className="lobby-mark" src="/capitalist-mark.svg" alt="" />
+        <p>AN ORIGINAL NEGOTIATION GAME SHOW</p>
+        <h1>THE CAPITALIST</h1>
+        <span>Twenty vaults. One private position. Every decision has a price.</span>
+        <button className="enter-show" type="button" onClick={onStart}>
+          <Sparkles size={20} /> ENTER THE SHOW <ChevronRight size={20} />
+        </button>
+        <small>Virtual CAP only · No cash-out · No tradable rewards</small>
+      </section>
+    </main>
+  )
 }
 
-function CapitalistPanel({
+function ShowChrome({
+  game,
+  ev,
+  round,
+  muted,
+  onToggleSound,
+  onExit,
+}: {
+  game: GameState
+  ev: number
+  round: number
+  muted: boolean
+  onToggleSound: () => void
+  onExit: () => void
+}) {
+  return (
+    <header className="show-chrome">
+      <div className="chrome-brand">
+        <img src="/capitalist-mark.svg" alt="" />
+        <strong>THE CAPITALIST</strong>
+      </div>
+      <div className="chrome-stats">
+        <span><small>ROUND</small>{round}/{ROUND_OPEN_COUNTS.length}</span>
+        <span><small>MARKET EV</small>{formatCap(ev)}</span>
+        <span><small>LIVE</small>{game.boxes.length - game.openedBoxIds.length}</span>
+      </div>
+      <div className="chrome-actions">
+        <button className="icon-button" type="button" onClick={onToggleSound} aria-label={muted ? 'Turn sound on' : 'Mute sound'}>
+          {muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
+        </button>
+        <button className="icon-button" type="button" onClick={onExit} aria-label="Exit show">
+          <RotateCcw size={19} />
+        </button>
+      </div>
+    </header>
+  )
+}
+
+function StageScene({
+  game,
+  boxesLeft,
+  revealLocked,
+  onChoose,
+  onReveal,
+}: {
+  game: GameState
+  boxesLeft: number
+  revealLocked: boolean
+  onChoose: (boxId: number) => void
+  onReveal: (boxId: number) => void
+}) {
+  return (
+    <section className="stage-screen">
+      <div className="stage-lights" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+      <PrizeTower game={game} side="low" />
+
+      <div className="vault-stage">
+        <div className="stage-callout">
+          <p>{game.phase === 'selecting' ? 'OPENING DECISION' : `ROUND ${game.roundIndex + 1}`}</p>
+          <h2>
+            {game.phase === 'selecting'
+              ? 'Choose the vault you will defend.'
+              : `Open ${boxesLeft} rival vault${boxesLeft === 1 ? '' : 's'}.`}
+          </h2>
+          <span>
+            {game.phase === 'selecting'
+              ? 'Its value stays hidden until you sell or reach the final reveal.'
+              : 'Each reveal removes a possible reward and reprices the offer.'}
+          </span>
+        </div>
+
+        <div className="vault-grid" aria-label="Vault stage">
+          {game.boxes.map((box) => (
+            <VaultButton
+              key={box.id}
+              box={box}
+              status={getBoxStatus(game, box.id)}
+              phase={game.phase}
+              revealLocked={revealLocked}
+              onSelect={onChoose}
+              onOpen={onReveal}
+            />
+          ))}
+        </div>
+
+        <div className={`private-podium ${game.selectedBoxId ? 'is-set' : ''}`}>
+          <span><Crown size={18} /> YOUR PRIVATE VAULT</span>
+          <strong>{game.selectedBoxId ? `#${String(game.selectedBoxId).padStart(2, '0')}` : 'NOT SELECTED'}</strong>
+        </div>
+      </div>
+
+      <PrizeTower game={game} side="high" />
+    </section>
+  )
+}
+
+function PrizeTower({ game, side }: { game: GameState; side: 'low' | 'high' }) {
+  const ordered = game.boxes.map((box) => box.reward).sort((a, b) => a - b)
+  const values = side === 'low' ? ordered.slice(0, 10).reverse() : ordered.slice(10).reverse()
+  const openedRewards = new Set(
+    game.openedBoxIds
+      .map((id) => game.boxes.find((box) => box.id === id)?.reward)
+      .filter((reward): reward is number => reward !== undefined),
+  )
+
+  return (
+    <aside className={`prize-tower prize-${side}`} aria-label={`${side} reward values`}>
+      <div className="tower-title"><Landmark size={15} /> {side === 'low' ? 'BASE' : 'PREMIUM'}</div>
+      {values.map((value) => (
+        <span className={`${openedRewards.has(value) ? 'removed' : ''} tier-${getRewardTier(value)}`} key={value}>
+          {formatCap(value).replace(' CAP', '')}
+        </span>
+      ))}
+    </aside>
+  )
+}
+
+function OfferScene({
   game,
   counterAsk,
   counterError,
@@ -247,110 +371,141 @@ function CapitalistPanel({
   onDeal,
   onHold,
   onCounter,
-  onSeedCounter,
-  onRestart,
-}: CapitalistPanelProps) {
+  onMark,
+}: {
+  game: GameState
+  counterAsk: string
+  counterError: string
+  onCounterAskChange: (value: string) => void
+  onDeal: () => void
+  onHold: () => void
+  onCounter: () => void
+  onMark: () => void
+}) {
+  const offer = game.currentOffer
+  if (!offer) return null
+
   return (
-    <section className={`capitalist-card ${game.phase === 'offer' ? 'is-offer' : ''}`}>
-      <div className="capitalist-header">
+    <section className="offer-screen">
+      <div className="offer-portrait-wrap">
         <img src={capitalistPortrait} alt="The Capitalist" />
-        <div>
-          <p className="section-kicker">THE CAPITALIST / DESK 01</p>
-          <strong>{game.phase === 'offer' ? 'LIVE NEGOTIATION' : 'RISK DESK'}</strong>
-          <span className="desk-status"><i /> ONLINE</span>
-        </div>
+        <div className="portrait-scan" />
+        <span><i /> RISK DESK · LIVE</span>
       </div>
 
-      {game.phase === 'ended' && game.settlement ? (
-        <SettlementPanel game={game} onRestart={onRestart} />
-      ) : game.phase === 'offer' && game.currentOffer ? (
-        <div className="offer-body">
-          <p className="offer-label">FINAL BID / ROUND {game.currentOffer.round}</p>
-          <div className="offer-amount">{formatCap(game.currentOffer.amount)}</div>
-          <div className="offer-metrics">
-            <span><small>EV</small>{formatCap(game.currentOffer.ev)}</span>
-            <span><small>BID / EV</small>{Math.round(game.currentOffer.multiplier * 100)}%</span>
-          </div>
-          <blockquote>“{game.currentOffer.quote}”</blockquote>
-
-          {game.lastCounter ? (
-            <div className={`counter-note ${game.lastCounter.kind}`}>
-              {game.lastCounter.note}
-            </div>
-          ) : null}
-
-          <div className="primary-actions">
-            <button className="deal-button" type="button" onClick={onDeal}>
-              <Check size={18} /> DEAL
-            </button>
-            <button className="hold-button" type="button" onClick={onHold}>
-              <Shield size={18} /> HOLD
-            </button>
-          </div>
-
-          <div className="counter-box">
-            <label htmlFor="counter-offer">YOUR COUNTER OFFER</label>
-            <div className="counter-input-row">
-              <input
-                id="counter-offer"
-                min="1"
-                inputMode="numeric"
-                type="number"
-                value={counterAsk}
-                onChange={(event) => onCounterAskChange(event.target.value)}
-                placeholder="CAP amount"
-                aria-describedby={counterError ? 'counter-error' : undefined}
-              />
-              <button type="button" onClick={onSeedCounter} title="Use a suggested mark">
-                MARK
-              </button>
-              <button className="counter-button" type="button" onClick={onCounter}>
-                <TrendingUp size={17} /> COUNTER
-              </button>
-            </div>
-            {counterError ? <span className="input-error" id="counter-error">{counterError}</span> : null}
-          </div>
+      <div className="offer-console">
+        <div className="incoming-call"><PhoneCall size={20} /> INCOMING OFFER · ROUND {offer.round}</div>
+        <p>THE CAPITALIST WILL BUY YOUR PRIVATE VAULT FOR</p>
+        <h2>{formatCap(offer.amount)}</h2>
+        <div className="offer-metrics">
+          <span><small>EXPECTED VALUE</small>{formatCap(offer.ev)}</span>
+          <span><small>OFFER / EV</small>{Math.round(offer.multiplier * 100)}%</span>
+          <span><small>PRESSURE</small>{offer.pressure.toUpperCase()}</span>
         </div>
-      ) : (
-        <div className="desk-message">
-          <span className="message-index">0{game.phase === 'selecting' ? '1' : '2'}</span>
-          <h2>{game.phase === 'selecting' ? 'Choose the one vault you own.' : 'Open rival vaults. Reprice the risk.'}</h2>
-          <p>
-            {game.phase === 'selecting'
-              ? 'Your choice stays sealed while the other rewards leave the market.'
-              : 'Complete the round and the desk will make a fresh offer based on remaining EV.'}
-          </p>
-          <div className="next-step">
-            <ChevronRight size={18} />
-            {game.phase === 'selecting' ? 'Tap any sealed vault' : 'Tap a rival vault to reveal it'}
+        <blockquote>“{offer.quote}”</blockquote>
+
+        {game.lastCounter ? (
+          <div className={`counter-response ${game.lastCounter.kind}`}>
+            <strong>{game.lastCounter.kind.toUpperCase()}</strong>
+            <span>{game.lastCounter.note}</span>
           </div>
+        ) : null}
+
+        <div className="decision-row">
+          <button className="deal-action" type="button" onClick={onDeal}>
+            <Check size={22} />
+            <span><small>LOCK THE PRICE</small>DEAL</span>
+          </button>
+          <button className="hold-action" type="button" onClick={onHold}>
+            <Shield size={22} />
+            <span><small>RETURN TO THE STAGE</small>HOLD</span>
+          </button>
         </div>
-      )}
+
+        <div className="counter-console">
+          <label htmlFor="counter-offer">COUNTER THE DESK</label>
+          <div>
+            <input
+              id="counter-offer"
+              min="1"
+              inputMode="numeric"
+              type="number"
+              value={counterAsk}
+              onChange={(event) => onCounterAskChange(event.target.value)}
+              placeholder="Enter CAP amount"
+            />
+            <button type="button" onClick={onMark}>MARK</button>
+            <button type="button" onClick={onCounter}><TrendingUp size={17} /> SEND</button>
+          </div>
+          {counterError ? <span className="input-error">{counterError}</span> : null}
+        </div>
+
+        <OfferTape game={game} />
+      </div>
     </section>
   )
 }
 
-function SettlementPanel({ game, onRestart }: { game: GameState; onRestart: () => void }) {
+function OfferTape({ game }: { game: GameState }) {
+  if (game.offerHistory.length === 0) return null
+  return (
+    <div className="offer-tape" aria-label="Offer history">
+      <span>OFFER HISTORY</span>
+      {game.offerHistory.map((offer, index) => (
+        <b key={`${offer.round}-${index}`}>R{offer.round} · {formatCap(offer.amount)}</b>
+      ))}
+    </div>
+  )
+}
+
+function SettlementScene({ game, onRestart }: { game: GameState; onRestart: () => void }) {
   const settlement = game.settlement
   if (!settlement) return null
   const edge = settlement.payout - settlement.personalBoxReward
 
   return (
-    <div className="settlement-body">
-      <div className="rating-emoji" aria-hidden="true">{settlement.ratingEmoji}</div>
-      <p className="offer-label">TRADE SETTLED</p>
+    <section className={`settlement-screen result-${settlement.ratingEmoji === '🗿' ? 'win' : 'loss'}`}>
+      <div className="settlement-beams" aria-hidden="true"><i /><i /><i /></div>
+      <div className="result-icon">{settlement.ratingEmoji}</div>
+      <p>FINAL SETTLEMENT</p>
       <h2>{settlement.grade}</h2>
-      <p className="settlement-note">{settlement.note}</p>
-      <div className="settlement-grid">
-        <span><small>PAYOUT</small>{formatCap(settlement.payout)}</span>
-        <span><small>YOUR VAULT</small>{formatCap(settlement.personalBoxReward)}</span>
-        <span className={edge >= 0 ? 'positive' : 'negative'}>
-          <small>DECISION EDGE</small>{edge >= 0 ? '+' : ''}{formatCap(edge)}
-        </span>
+      <span className="result-note">{settlement.note}</span>
+
+      <div className="result-comparison">
+        <div>
+          <small>YOUR PAYOUT</small>
+          <strong>{formatCap(settlement.payout)}</strong>
+        </div>
+        <div className="versus">VS</div>
+        <div>
+          <small>PRIVATE VAULT</small>
+          <strong>{formatCap(settlement.personalBoxReward)}</strong>
+        </div>
       </div>
-      <button className="new-game-button" type="button" onClick={onRestart}>
-        <RotateCcw size={18} /> NEW GAME
+
+      <div className={`decision-edge ${edge >= 0 ? 'positive' : 'negative'}`}>
+        <Trophy size={19} /> DECISION EDGE&nbsp;
+        <strong>{edge >= 0 ? '+' : ''}{formatCap(edge)}</strong>
+      </div>
+
+      <button className="play-again" type="button" onClick={onRestart}>
+        <RotateCcw size={20} /> PLAY ANOTHER SHOW
       </button>
+    </section>
+  )
+}
+
+function RevealOverlay({ reveal }: { reveal: RevealState }) {
+  return (
+    <div className="reveal-overlay" role="status" aria-live="assertive">
+      <div className="reveal-spotlight" />
+      <div className="opening-vault">
+        <div className="vault-lid"><BriefcaseBusiness size={38} /></div>
+        <div className="vault-body"><span>{String(reveal.boxId).padStart(2, '0')}</span></div>
+      </div>
+      <p>VAULT {String(reveal.boxId).padStart(2, '0')} CONTAINED</p>
+      <strong className={`tier-${getRewardTier(reveal.reward)}`}>{formatCap(reveal.reward)}</strong>
+      <span>REMOVED FROM THE BOARD</span>
     </div>
   )
 }
@@ -359,14 +514,21 @@ interface VaultButtonProps {
   box: PrizeBox
   status: BoxStatus
   phase: GameState['phase']
+  revealLocked: boolean
   onSelect: (boxId: number) => void
   onOpen: (boxId: number) => void
 }
 
-function VaultButton({ box, status, phase, onSelect, onOpen }: VaultButtonProps) {
-  const isRevealed = status === 'opened' || phase === 'ended'
-  const isDisabled =
-    phase === 'ended' || status === 'opened' || phase === 'offer' ||
+function VaultButton({
+  box,
+  status,
+  phase,
+  revealLocked,
+  onSelect,
+  onOpen,
+}: VaultButtonProps) {
+  const opened = status === 'opened'
+  const disabled = revealLocked || opened || phase === 'offer' ||
     (phase === 'opening' && status === 'chosen')
 
   function handleClick() {
@@ -376,73 +538,21 @@ function VaultButton({ box, status, phase, onSelect, onOpen }: VaultButtonProps)
 
   return (
     <button
-      className={`vault ${status} ${isRevealed ? `tier-${getRewardTier(box.reward)}` : ''}`}
+      className={`show-vault ${status} ${opened ? `tier-${getRewardTier(box.reward)}` : ''}`}
       type="button"
-      disabled={isDisabled}
+      disabled={disabled}
       onClick={handleClick}
       aria-label={`Vault ${box.id}${status === 'chosen' ? ', your private vault' : ''}`}
     >
-      <span className="vault-topline">
+      <span className="case-handle" />
+      <span className="case-face">
         <b>{String(box.id).padStart(2, '0')}</b>
-        {isRevealed ? <UnlockKeyhole size={15} /> : <LockKeyhole size={15} />}
+        <BriefcaseBusiness size={18} strokeWidth={1.7} />
       </span>
-      <BriefcaseBusiness className="vault-icon" size={25} strokeWidth={1.6} />
-      <span className="vault-value">
-        {isRevealed ? formatCap(box.reward) : status === 'chosen' ? 'YOUR VAULT' : 'SEALED'}
+      <span className="case-value">
+        {opened ? formatCap(box.reward) : status === 'chosen' ? 'YOURS' : 'SEALED'}
       </span>
     </button>
-  )
-}
-
-function PrizeLedger({ game }: { game: GameState }) {
-  const openedRewards = new Set(
-    game.openedBoxIds
-      .map((id) => game.boxes.find((box) => box.id === id)?.reward)
-      .filter((reward): reward is number => reward !== undefined),
-  )
-  const rewards = [...game.boxes].sort((a, b) => b.reward - a.reward)
-
-  return (
-    <section className="ledger">
-      <div className="ledger-heading">
-        <div>
-          <p className="section-kicker">REWARD LADDER</p>
-          <h2>LIVE CAPITAL</h2>
-        </div>
-        <span>{rewards.length - openedRewards.size} LEFT</span>
-      </div>
-      <div className="reward-list">
-        {rewards.map((box) => {
-          const removed = openedRewards.has(box.reward)
-          const owned = game.selectedBoxId === box.id && game.phase !== 'ended'
-
-          return (
-            <span
-              className={`reward-pill tier-${getRewardTier(box.reward)} ${removed ? 'removed' : ''} ${owned ? 'owned' : ''}`}
-              key={box.reward}
-            >
-              {formatCap(box.reward).replace(' CAP', '')}
-            </span>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-function OfferHistory({ game }: { game: GameState }) {
-  if (game.offerHistory.length === 0) return null
-
-  return (
-    <section className="offer-history" aria-label="Offer history">
-      <span>OFFER TAPE</span>
-      {game.offerHistory.map((offer, index) => (
-        <div key={`${offer.round}-${index}`}>
-          <small>R{offer.round}</small>
-          <strong>{formatCap(offer.amount)}</strong>
-        </div>
-      ))}
-    </section>
   )
 }
 
@@ -450,20 +560,6 @@ function getBoxStatus(game: GameState, boxId: number): BoxStatus {
   if (game.openedBoxIds.includes(boxId)) return 'opened'
   if (game.selectedBoxId === boxId) return 'chosen'
   return 'available'
-}
-
-function getStageTitle(game: GameState, boxesLeftThisRound: number) {
-  if (game.phase === 'selecting') return 'Choose your private vault.'
-  if (game.phase === 'opening') return `Open ${boxesLeftThisRound} rival vault${boxesLeftThisRound === 1 ? '' : 's'}.`
-  if (game.phase === 'offer') return 'The desk is pricing your position.'
-  return 'The market has closed.'
-}
-
-function getPhaseLabel(game: GameState, boxesLeft: number) {
-  if (game.phase === 'selecting') return 'SELECT 1'
-  if (game.phase === 'opening') return `${boxesLeft} TO OPEN`
-  if (game.phase === 'offer') return 'DECISION LIVE'
-  return 'SETTLED'
 }
 
 export default App
