@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# Cocos Creator local outputs
+apps/cocos/**/build/
+apps/cocos/**/build-short/
+apps/cocos/**/library/
+apps/cocos/**/temp/
+apps/cocos/**/native/
+apps/cocos/**/profiles/
+apps/cocos/**/settings/
+apps/cocos/**/*.stdout.log
+apps/cocos/**/*.stderr.log
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
