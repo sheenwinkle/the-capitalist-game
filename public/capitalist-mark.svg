@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">THE CAPITALIST mark</title>
+  <desc id="desc">A black and gold Wall Street inspired vault and bull mark.</desc>
+  <defs>
+    <linearGradient id="gold" x1="20" x2="140" y1="18" y2="144" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff0b8"/>
+      <stop offset="0.48" stop-color="#d7a84d"/>
+      <stop offset="1" stop-color="#8f5f19"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="42" x2="120" y1="42" y2="126" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20262a"/>
+      <stop offset="1" stop-color="#07090a"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" fill="#080a0b" rx="24"/>
+  <path fill="url(#gold)" d="M80 14 134 40v80l-54 26-54-26V40l54-26Zm0 12L38 46v66l42 20 42-20V46L80 26Z"/>
+  <path fill="url(#steel)" stroke="url(#gold)" stroke-width="5" d="M50 58h60v54H50z"/>
+  <path fill="none" stroke="#f6d27f" stroke-linecap="round" stroke-width="6" d="M42 58c8-18 24-22 38-12 14-10 30-6 38 12M65 86h30M80 71v31"/>
+  <circle cx="80" cy="86" r="15" fill="#090b0c" stroke="#f6d27f" stroke-width="5"/>
+  <path fill="#66e0c2" d="M80 78c5 0 9 4 9 9h-7c0-2-1-3-3-3-1 0-2 1-2 2 0 5 13 2 13 12 0 5-4 9-10 9s-10-4-11-9h7c1 2 2 3 4 3s3-1 3-2c0-5-13-2-13-12 0-5 4-9 10-9Z"/>
+</svg>
